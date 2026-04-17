@@ -248,6 +248,16 @@
       originY: 0
     };
 
+    const pinch = {
+      active: false,
+      startDistance: 0,
+      startScale: 1,
+      anchorOutputX: 0,
+      anchorOutputY: 0,
+      startOutputX: 0,
+      startOutputY: 0
+    };
+
     function populateProducts() {
       Object.entries(productConfigs).forEach(([code, config]) => {
         const opt = document.createElement('option');
@@ -400,18 +410,64 @@
 
       const centerX = stageState.outputWidth / 2;
       const centerY = stageState.outputHeight / 2;
+      zoomAroundOutputPoint(delta, centerX, centerY);
+    }
+
+    function zoomAroundOutputPoint(delta, anchorX, anchorY) {
+      if (!imageLoaded) return;
+
       const oldWidth = photoState.baseWidth * photoState.outputScale;
       const oldHeight = photoState.baseHeight * photoState.outputScale;
-      const relativeX = (centerX - photoState.outputX) / oldWidth;
-      const relativeY = (centerY - photoState.outputY) / oldHeight;
+      const relativeX = (anchorX - photoState.outputX) / oldWidth;
+      const relativeY = (anchorY - photoState.outputY) / oldHeight;
 
       photoState.outputScale = clampScale(photoState.outputScale + delta);
 
       const newWidth = photoState.baseWidth * photoState.outputScale;
       const newHeight = photoState.baseHeight * photoState.outputScale;
-      photoState.outputX = centerX - (newWidth * relativeX);
-      photoState.outputY = centerY - (newHeight * relativeY);
+      photoState.outputX = anchorX - (newWidth * relativeX);
+      photoState.outputY = anchorY - (newHeight * relativeY);
       applyPhotoTransform();
+    }
+
+    function setScaleAroundOutputPoint(nextScale, anchorX, anchorY) {
+      if (!imageLoaded) return;
+
+      const oldWidth = photoState.baseWidth * photoState.outputScale;
+      const oldHeight = photoState.baseHeight * photoState.outputScale;
+      const relativeX = (anchorX - photoState.outputX) / oldWidth;
+      const relativeY = (anchorY - photoState.outputY) / oldHeight;
+
+      photoState.outputScale = clampScale(nextScale);
+
+      const newWidth = photoState.baseWidth * photoState.outputScale;
+      const newHeight = photoState.baseHeight * photoState.outputScale;
+      photoState.outputX = anchorX - (newWidth * relativeX);
+      photoState.outputY = anchorY - (newHeight * relativeY);
+      applyPhotoTransform();
+    }
+
+    function getTouchDistance(touchA, touchB) {
+      const dx = touchB.clientX - touchA.clientX;
+      const dy = touchB.clientY - touchA.clientY;
+      return Math.sqrt((dx * dx) + (dy * dy));
+    }
+
+    function getTouchMidpoint(touchA, touchB) {
+      return {
+        x: (touchA.clientX + touchB.clientX) / 2,
+        y: (touchA.clientY + touchB.clientY) / 2
+      };
+    }
+
+    function clientPointToOutputPoint(clientX, clientY) {
+      const rect = cropStage.getBoundingClientRect();
+      const stageX = clientX - rect.left;
+      const stageY = clientY - rect.top;
+      return {
+        x: stageX / stageState.displayScale,
+        y: stageY / stageState.displayScale
+      };
     }
 
     function exportCanvas() {
@@ -495,16 +551,64 @@
     window.addEventListener('mouseup', endDrag);
 
     userPhoto.addEventListener('touchstart', (e) => {
-      if (!e.touches.length) return;
-      const t = e.touches[0];
-      beginDrag(t.clientX, t.clientY);
-    }, { passive: true });
+      if (!imageLoaded) return;
+
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        beginDrag(t.clientX, t.clientY);
+        pinch.active = false;
+      } else if (e.touches.length === 2) {
+        drag.active = false;
+        userPhoto.classList.remove('dragging');
+
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const midpoint = getTouchMidpoint(t1, t2);
+        const anchor = clientPointToOutputPoint(midpoint.x, midpoint.y);
+
+        pinch.active = true;
+        pinch.startDistance = getTouchDistance(t1, t2);
+        pinch.startScale = photoState.outputScale;
+        pinch.anchorOutputX = anchor.x;
+        pinch.anchorOutputY = anchor.y;
+        pinch.startOutputX = photoState.outputX;
+        pinch.startOutputY = photoState.outputY;
+      }
+    }, { passive: false });
+
     window.addEventListener('touchmove', (e) => {
+      if (!imageLoaded) return;
+
+      if (e.touches.length === 2 && pinch.active) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentDistance = getTouchDistance(t1, t2);
+        const scaleFactor = currentDistance / pinch.startDistance;
+        const nextScale = pinch.startScale * scaleFactor;
+        setScaleAroundOutputPoint(nextScale, pinch.anchorOutputX, pinch.anchorOutputY);
+        return;
+      }
+
       if (!drag.active || !e.touches.length) return;
+      e.preventDefault();
       const t = e.touches[0];
       moveDrag(t.clientX, t.clientY);
-    }, { passive: true });
-    window.addEventListener('touchend', endDrag);
+    }, { passive: false });
+
+    window.addEventListener('touchend', (e) => {
+      if (e.touches.length === 1 && pinch.active) {
+        pinch.active = false;
+        const t = e.touches[0];
+        beginDrag(t.clientX, t.clientY);
+        return;
+      }
+
+      if (e.touches.length === 0) {
+        pinch.active = false;
+        endDrag();
+      }
+    });
 
     cropStage.addEventListener('wheel', (e) => {
       if (!imageLoaded) return;
