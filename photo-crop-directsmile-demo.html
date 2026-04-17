@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Photo Crop Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 24px;
+      background: #f6f6f6;
+      color: #222;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 24px;
+    }
+    .panel, .stage-panel {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    h1 { margin-top: 0; font-size: 24px; }
+    h2 { font-size: 18px; margin-top: 0; }
+    label { display: block; margin: 12px 0 6px; font-weight: bold; }
+    select, input[type="file"], button, input[type="text"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+      background: #222;
+      color: #fff;
+      border: none;
+      margin-top: 10px;
+    }
+    button:hover { background: #444; }
+    .small {
+      font-size: 12px;
+      color: #666;
+      line-height: 1.5;
+      margin-top: 8px;
+    }
+    .stage-panel {
+      overflow: auto;
+      min-width: 0;
+    }
+    .stage-wrap {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 10px;
+      overflow: auto;
+    }
+    .crop-stage {
+      position: relative;
+      display: inline-block;
+      border: 1px dashed #bbb;
+      background: #fafafa;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      flex: 0 0 auto;
+    }
+    .crop-base,
+    .user-photo,
+    .mask-overlay {
+      position: absolute;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .crop-base {
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      object-fit: contain;
+    }
+    .user-photo {
+      z-index: 2;
+      cursor: grab;
+      pointer-events: auto;
+      transform-origin: top left;
+      max-width: none;
+      max-height: none;
+    }
+    .user-photo.dragging { cursor: grabbing; }
+    .mask-overlay {
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      object-fit: contain;
+    }
+    .controls-inline {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .controls-inline.three {
+      grid-template-columns: repeat(3, 1fr);
+    }
+    .output {
+      margin-top: 16px;
+      padding: 12px;
+      background: #f7f7f7;
+      border-radius: 8px;
+      border: 1px solid #e2e2e2;
+      font-size: 13px;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #444;
+    }
+
+    @media (max-width: 900px) {
+      .wrap {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h1>Photo Crop Demo</h1>
+
+      <label for="productSelect">Product</label>
+      <select id="productSelect"></select>
+
+      <label for="photoInput">Upload photo</label>
+      <input id="photoInput" type="file" accept="image/*" />
+
+      <label for="previewUrl">DirectSmile preview URL (test)</label>
+      <input id="previewUrl" type="text" value="https://example.com/directsmile-preview" />
+      <div class="small">For the demo this is only shown in the output area. In production, the clean cropped export would be sent to your server and then into your DirectSmile flow.</div>
+
+      <div class="controls-inline three">
+        <button id="zoomOutBtn" type="button">Zoom -</button>
+        <button id="zoomInBtn" type="button">Zoom +</button>
+        <button id="resetBtn" type="button">Reset</button>
+      </div>
+
+      <div class="controls-inline">
+        <button id="downloadRawBtn" type="button">Download cropped</button>
+      </div>
+
+      <button id="simulateSendBtn" type="button">Simulate DirectSmile send</button>
+
+      <div class="status" id="status">Load a product and upload a photo.</div>
+
+      <div class="output" id="output">Waiting for export...</div>
+    </div>
+
+    <div class="stage-panel">
+      <h2>Crop area</h2>
+      <div class="small">The white base image defines the final output size and aspect ratio. The mask image sits over the top visually. The photo position is tied to the crop's real output size so it stays consistent if the page size changes. Zooming out further than cover is allowed.</div>
+      <div class="stage-wrap">
+        <div id="cropStage" class="crop-stage">
+          <img id="cropBase" class="crop-base" alt="Crop area base" />
+          <img id="userPhoto" class="user-photo" alt="Uploaded photo" style="display:none;" />
+          <img id="maskOverlay" class="mask-overlay" alt="Mask overlay" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const productConfigs = {
+      "P0102Z29": {
+        label: "P0102Z29",
+        folder: "products/P0102Z29/",
+        cropBase: "products/P0102Z29/crop-base.png",
+        mask: "products/P0102Z29/mask.png"
+      },
+      "P1011E87": {
+        label: "P1011E87",
+        folder: "products/P1011E87/",
+        cropBase: "products/P1011E87/crop-base.png",
+        mask: "products/P1011E87/mask.png"
+      },
+      "P1007F60": {
+        label: "P1007F60",
+        folder: "products/P1007F60/",
+        cropBase: "products/P1007F60/crop-base.png",
+        mask: "products/P1007F60/mask.png"
+      }
+    };
+
+    const productSelect = document.getElementById('productSelect');
+    const photoInput = document.getElementById('photoInput');
+    const previewUrl = document.getElementById('previewUrl');
+    const cropStage = document.getElementById('cropStage');
+    const cropBase = document.getElementById('cropBase');
+    const userPhoto = document.getElementById('userPhoto');
+    const maskOverlay = document.getElementById('maskOverlay');
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const downloadRawBtn = document.getElementById('downloadRawBtn');
+    const simulateSendBtn = document.getElementById('simulateSendBtn');
+    const statusEl = document.getElementById('status');
+    const outputEl = document.getElementById('output');
+
+    let currentProductCode = null;
+    let uploadedImage = null;
+    let imageLoaded = false;
+    let baseLoaded = false;
+
+    const stageState = {
+      width: 0,
+      height: 0,
+      outputWidth: 0,
+      outputHeight: 0,
+      displayScale: 1
+    };
+
+    const photoState = {
+      baseWidth: 0,
+      baseHeight: 0,
+      outputX: 0,
+      outputY: 0,
+      outputScale: 1,
+      coverScale: 1,
+      minScale: 0.05
+    };
+
+    const drag = {
+      active: false,
+      startX: 0,
+      startY: 0,
+      originX: 0,
+      originY: 0
+    };
+
+    function populateProducts() {
+      Object.entries(productConfigs).forEach(([code, config]) => {
+        const opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = config.label;
+        productSelect.appendChild(opt);
+      });
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function resetPhotoState() {
+      photoState.baseWidth = 0;
+      photoState.baseHeight = 0;
+      photoState.outputX = 0;
+      photoState.outputY = 0;
+      photoState.outputScale = 1;
+      photoState.coverScale = 1;
+      photoState.minScale = 0.05;
+      applyPhotoTransform();
+    }
+
+    function clearPhoto() {
+      uploadedImage = null;
+      imageLoaded = false;
+      userPhoto.removeAttribute('src');
+      userPhoto.style.display = 'none';
+      resetPhotoState();
+    }
+
+    function fitStageToBase() {
+      if (!cropBase.naturalWidth || !cropBase.naturalHeight) return;
+
+      const stageWrap = cropStage.parentElement;
+      const wrapStyles = window.getComputedStyle(stageWrap);
+      const wrapPaddingLeft = parseFloat(wrapStyles.paddingLeft) || 0;
+      const wrapPaddingRight = parseFloat(wrapStyles.paddingRight) || 0;
+      const availableWidth = Math.max(240, stageWrap.clientWidth - wrapPaddingLeft - wrapPaddingRight);
+      const maxDisplayWidth = Math.min(700, availableWidth);
+      const maxDisplayHeight = Math.min(700, window.innerHeight * 0.65);
+
+      let width = cropBase.naturalWidth;
+      let height = cropBase.naturalHeight;
+      const ratio = width / height;
+
+      if (width > maxDisplayWidth) {
+        width = maxDisplayWidth;
+        height = Math.round(width / ratio);
+      }
+      if (height > maxDisplayHeight) {
+        height = maxDisplayHeight;
+        width = Math.round(height * ratio);
+      }
+
+      cropStage.style.width = `${width}px`;
+      cropStage.style.height = `${height}px`;
+
+      stageState.width = width;
+      stageState.height = height;
+      stageState.outputWidth = cropBase.naturalWidth;
+      stageState.outputHeight = cropBase.naturalHeight;
+      stageState.displayScale = width / cropBase.naturalWidth;
+    }
+
+    function applyPhotoTransform() {
+      if (!imageLoaded || !stageState.displayScale) return;
+
+      const displayWidth = photoState.baseWidth * photoState.outputScale * stageState.displayScale;
+      const displayHeight = photoState.baseHeight * photoState.outputScale * stageState.displayScale;
+      const displayX = photoState.outputX * stageState.displayScale;
+      const displayY = photoState.outputY * stageState.displayScale;
+
+      userPhoto.style.width = `${displayWidth}px`;
+      userPhoto.style.height = `${displayHeight}px`;
+      userPhoto.style.left = `${displayX}px`;
+      userPhoto.style.top = `${displayY}px`;
+    }
+
+    function centerCoveredPhoto() {
+      if (!uploadedImage || !stageState.outputWidth || !stageState.outputHeight) return;
+
+      const coverScale = Math.max(
+        stageState.outputWidth / uploadedImage.width,
+        stageState.outputHeight / uploadedImage.height
+      );
+
+      photoState.baseWidth = uploadedImage.width;
+      photoState.baseHeight = uploadedImage.height;
+      photoState.coverScale = coverScale;
+      photoState.outputScale = coverScale;
+
+      const outputWidth = photoState.baseWidth * photoState.outputScale;
+      const outputHeight = photoState.baseHeight * photoState.outputScale;
+
+      photoState.outputX = (stageState.outputWidth - outputWidth) / 2;
+      photoState.outputY = (stageState.outputHeight - outputHeight) / 2;
+      applyPhotoTransform();
+    }
+
+    function loadProduct(productCode) {
+      currentProductCode = productCode;
+      const config = productConfigs[productCode];
+      baseLoaded = false;
+
+      cropBase.onload = () => {
+        baseLoaded = true;
+        fitStageToBase();
+        if (uploadedImage) {
+          centerCoveredPhoto();
+        }
+        setStatus(`Loaded ${config.label}. Upload a photo.`);
+      };
+
+      cropBase.src = config.cropBase;
+      maskOverlay.src = config.mask;
+
+      clearPhoto();
+      photoInput.value = '';
+      outputEl.textContent = `Product folder: ${config.folder}`;
+    }
+
+    function handlePhotoUpload(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          uploadedImage = img;
+          userPhoto.src = img.src;
+          userPhoto.style.display = 'block';
+          imageLoaded = true;
+          if (baseLoaded) {
+            centerCoveredPhoto();
+          }
+          setStatus('Photo loaded. Drag to position and use zoom if needed.');
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function clampScale(nextScale) {
+      return Math.max(photoState.minScale, nextScale);
+    }
+
+    function zoomAroundStageCenter(delta) {
+      if (!imageLoaded) return;
+
+      const centerX = stageState.outputWidth / 2;
+      const centerY = stageState.outputHeight / 2;
+      const oldWidth = photoState.baseWidth * photoState.outputScale;
+      const oldHeight = photoState.baseHeight * photoState.outputScale;
+      const relativeX = (centerX - photoState.outputX) / oldWidth;
+      const relativeY = (centerY - photoState.outputY) / oldHeight;
+
+      photoState.outputScale = clampScale(photoState.outputScale + delta);
+
+      const newWidth = photoState.baseWidth * photoState.outputScale;
+      const newHeight = photoState.baseHeight * photoState.outputScale;
+      photoState.outputX = centerX - (newWidth * relativeX);
+      photoState.outputY = centerY - (newHeight * relativeY);
+      applyPhotoTransform();
+    }
+
+    function exportCanvas() {
+      if (!baseLoaded || !imageLoaded) {
+        alert('Please load a product and upload a photo first.');
+        return null;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = stageState.outputWidth;
+      canvas.height = stageState.outputHeight;
+      const ctx = canvas.getContext('2d');
+
+      const drawX = photoState.outputX;
+      const drawY = photoState.outputY;
+      const drawW = photoState.baseWidth * photoState.outputScale;
+      const drawH = photoState.baseHeight * photoState.outputScale;
+
+      ctx.drawImage(uploadedImage, drawX, drawY, drawW, drawH);
+      return canvas;
+    }
+
+    function downloadCanvas(canvas, filename) {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    function simulateDirectSmileSend() {
+      const rawCanvas = exportCanvas();
+      if (!rawCanvas) return;
+
+      const payload = {
+        productCode: currentProductCode,
+        outputWidth: rawCanvas.width,
+        outputHeight: rawCanvas.height,
+        fileName: `${currentProductCode}_cropped.png`,
+        imageData: rawCanvas.toDataURL('image/png'),
+        note: 'Send this clean cropped image to your server, then into your DirectSmile workflow/preview.'
+      };
+
+      outputEl.textContent = [
+        `POST TO: ${previewUrl.value}`,
+        '',
+        JSON.stringify(payload, null, 2)
+      ].join('\n');
+
+      setStatus('Simulated DirectSmile payload created below.');
+    }
+
+    function beginDrag(clientX, clientY) {
+      if (!imageLoaded) return;
+      drag.active = true;
+      drag.startX = clientX;
+      drag.startY = clientY;
+      drag.originX = photoState.outputX;
+      drag.originY = photoState.outputY;
+      userPhoto.classList.add('dragging');
+    }
+
+    function moveDrag(clientX, clientY) {
+      if (!drag.active) return;
+      const deltaOutputX = (clientX - drag.startX) / stageState.displayScale;
+      const deltaOutputY = (clientY - drag.startY) / stageState.displayScale;
+      photoState.outputX = drag.originX + deltaOutputX;
+      photoState.outputY = drag.originY + deltaOutputY;
+      applyPhotoTransform();
+    }
+
+    function endDrag() {
+      drag.active = false;
+      userPhoto.classList.remove('dragging');
+    }
+
+    userPhoto.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      beginDrag(e.clientX, e.clientY);
+    });
+    window.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+    window.addEventListener('mouseup', endDrag);
+
+    userPhoto.addEventListener('touchstart', (e) => {
+      if (!e.touches.length) return;
+      const t = e.touches[0];
+      beginDrag(t.clientX, t.clientY);
+    }, { passive: true });
+    window.addEventListener('touchmove', (e) => {
+      if (!drag.active || !e.touches.length) return;
+      const t = e.touches[0];
+      moveDrag(t.clientX, t.clientY);
+    }, { passive: true });
+    window.addEventListener('touchend', endDrag);
+
+    cropStage.addEventListener('wheel', (e) => {
+      if (!imageLoaded) return;
+      e.preventDefault();
+      zoomAroundStageCenter(e.deltaY < 0 ? 0.08 : -0.08);
+    });
+
+    window.addEventListener('resize', () => {
+      if (!baseLoaded) return;
+      fitStageToBase();
+      applyPhotoTransform();
+    });
+
+    productSelect.addEventListener('change', () => loadProduct(productSelect.value));
+    photoInput.addEventListener('change', (e) => handlePhotoUpload(e.target.files[0]));
+
+    zoomInBtn.addEventListener('click', () => zoomAroundStageCenter(0.08));
+    zoomOutBtn.addEventListener('click', () => zoomAroundStageCenter(-0.08));
+    resetBtn.addEventListener('click', () => {
+      if (!imageLoaded) return;
+      centerCoveredPhoto();
+      setStatus('Photo reset to cover the crop area.');
+    });
+
+    downloadRawBtn.addEventListener('click', () => {
+      const canvas = exportCanvas();
+      if (!canvas) return;
+      downloadCanvas(canvas, `${currentProductCode}_cropped.png`);
+      setStatus(`Downloaded clean cropped image at ${canvas.width} x ${canvas.height}.`);
+    });
+
+    simulateSendBtn.addEventListener('click', simulateDirectSmileSend);
+
+    populateProducts();
+    loadProduct(Object.keys(productConfigs)[0]);
+  </script>
+</body>
+</html>
