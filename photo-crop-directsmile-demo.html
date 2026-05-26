@@ -157,6 +157,11 @@
       </div>
 
       <div class="controls-inline">
+        <button id="rotateLeftBtn" type="button">Rotate -5°</button>
+        <button id="rotateRightBtn" type="button">Rotate +5°</button>
+      </div>
+
+      <div class="controls-inline">
         <button id="downloadRawBtn" type="button">Download cropped</button>
       </div>
 
@@ -212,6 +217,8 @@
     const zoomInBtn = document.getElementById('zoomInBtn');
     const zoomOutBtn = document.getElementById('zoomOutBtn');
     const resetBtn = document.getElementById('resetBtn');
+    const rotateLeftBtn = document.getElementById('rotateLeftBtn');
+    const rotateRightBtn = document.getElementById('rotateRightBtn');
     const downloadRawBtn = document.getElementById('downloadRawBtn');
     const simulateSendBtn = document.getElementById('simulateSendBtn');
     const statusEl = document.getElementById('status');
@@ -236,6 +243,7 @@
       outputX: 0,
       outputY: 0,
       outputScale: 1,
+      rotation: 0,
       coverScale: 1,
       minScale: 0.05
     };
@@ -252,6 +260,8 @@
       active: false,
       startDistance: 0,
       startScale: 1,
+      startRotation: 0,
+      startAngle: 0,
       anchorOutputX: 0,
       anchorOutputY: 0,
       startOutputX: 0,
@@ -277,6 +287,7 @@
       photoState.outputX = 0;
       photoState.outputY = 0;
       photoState.outputScale = 1;
+      photoState.rotation = 0;
       photoState.coverScale = 1;
       photoState.minScale = 0.05;
       applyPhotoTransform();
@@ -336,6 +347,8 @@
       userPhoto.style.height = `${displayHeight}px`;
       userPhoto.style.left = `${displayX}px`;
       userPhoto.style.top = `${displayY}px`;
+      userPhoto.style.transform = `rotate(${photoState.rotation}deg)`;
+      userPhoto.style.transformOrigin = 'center center';
     }
 
     function centerCoveredPhoto() {
@@ -350,6 +363,7 @@
       photoState.baseHeight = uploadedImage.height;
       photoState.coverScale = coverScale;
       photoState.outputScale = coverScale;
+      photoState.rotation = 0;
 
       const outputWidth = photoState.baseWidth * photoState.outputScale;
       const outputHeight = photoState.baseHeight * photoState.outputScale;
@@ -453,6 +467,12 @@
       return Math.sqrt((dx * dx) + (dy * dy));
     }
 
+    function getTouchAngle(touchA, touchB) {
+      const dx = touchB.clientX - touchA.clientX;
+      const dy = touchB.clientY - touchA.clientY;
+      return Math.atan2(dy, dx) * 180 / Math.PI;
+    }
+
     function getTouchMidpoint(touchA, touchB) {
       return {
         x: (touchA.clientX + touchB.clientX) / 2,
@@ -485,8 +505,14 @@
       const drawY = photoState.outputY;
       const drawW = photoState.baseWidth * photoState.outputScale;
       const drawH = photoState.baseHeight * photoState.outputScale;
+      const centerX = drawX + drawW / 2;
+      const centerY = drawY + drawH / 2;
 
-      ctx.drawImage(uploadedImage, drawX, drawY, drawW, drawH);
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(photoState.rotation * Math.PI / 180);
+      ctx.drawImage(uploadedImage, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
       return canvas;
     }
 
@@ -543,6 +569,13 @@
       userPhoto.classList.remove('dragging');
     }
 
+    function rotateImageBy(degrees) {
+      if (!imageLoaded) return;
+      photoState.rotation += degrees;
+      applyPhotoTransform();
+      setStatus(`Rotation: ${Math.round(photoState.rotation)}°`);
+    }
+
     userPhoto.addEventListener('mousedown', (e) => {
       e.preventDefault();
       beginDrag(e.clientX, e.clientY);
@@ -571,6 +604,8 @@
         pinch.active = true;
         pinch.startDistance = Math.max(1, getTouchDistance(t1, t2));
         pinch.startScale = photoState.outputScale;
+        pinch.startAngle = getTouchAngle(t1, t2);
+        pinch.startRotation = photoState.rotation;
         pinch.anchorOutputX = anchor.x;
         pinch.anchorOutputY = anchor.y;
       }
@@ -586,6 +621,9 @@
         const currentDistance = Math.max(1, getTouchDistance(t1, t2));
         const scaleFactor = currentDistance / pinch.startDistance;
         const nextScale = pinch.startScale * scaleFactor;
+        const currentAngle = getTouchAngle(t1, t2);
+        const angleDelta = currentAngle - pinch.startAngle;
+        photoState.rotation = pinch.startRotation + angleDelta;
         setScaleAroundOutputPoint(nextScale, pinch.anchorOutputX, pinch.anchorOutputY);
         return;
       }
@@ -633,6 +671,8 @@
 
     zoomInBtn.addEventListener('click', () => zoomAroundStageCenter(0.08));
     zoomOutBtn.addEventListener('click', () => zoomAroundStageCenter(-0.08));
+    rotateLeftBtn.addEventListener('click', () => rotateImageBy(-5));
+    rotateRightBtn.addEventListener('click', () => rotateImageBy(5));
     resetBtn.addEventListener('click', () => {
       if (!imageLoaded) return;
       centerCoveredPhoto();
